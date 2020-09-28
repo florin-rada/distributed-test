@@ -5,15 +5,21 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"regexp"
+	"sync/atomic"
 	"time"
 )
 
 // FILENAME the name of the local "db"
 const FILENAME = "local.db"
+
+// CONFIGNAME holds the name of the config file used at startup
+const CONFIGNAME = "config.cfg"
+
 const (
 	// FOLLOWER state of the node
 	FOLLOWER = 1
@@ -58,6 +64,19 @@ const (
 	LogError
 )
 
+// NodeInfo represents the details used to connect to other nodes
+type NodeInfo struct {
+	HTTPAddress string `json:"HTTPAddress"`
+	RPCAddress  string `json:"RPCAddress"`
+}
+
+// Config contains the details used at the startup of the node
+type Config struct {
+	HTTPPort string     `json:"HTTPPort"`
+	RPCPort  string     `json:"RPCPort"`
+	Nodes    []NodeInfo `json:"Nodes"`
+}
+
 // RespWriterWithCode is a version of response writer that stores the StatusCode
 type RespWriterWithCode struct {
 	http.ResponseWriter
@@ -76,6 +95,7 @@ type Action struct {
 	Action       int
 	MSG          Message
 	ReplyChannel chan Message
+	Index        uint64 // only sent with ActionSyncLogFromNode this sets the new index to this value
 }
 
 // Response is the struct returned by all api calls (under json format)
@@ -91,18 +111,32 @@ var Nodes []string
 // We create a type for it so we can use it in the RPC to sync the nodes
 type Store map[string]int
 
+// Index represents the number of modifications done to the store, it's used to sync with the other nodes
+var Index uint64
+
 // InternalStore is the in memory "db" instance
 var InternalStore Store
 
 // StoreChannel will be used to communicate with the Store, all writes will be done through it
 var StoreChannel chan Action
 
-func main() {
+// CFG holds the configuration values for starting the node
+var CFG Config
 
+func main() {
+	rpc.Register(&InternalStore)
+	rpc.HandleHTTP()
+	listener, err := net.Listen("tcp", CFG.RPCPort)
+	if err != nil {
+		log.Fatalf("Listen error for RPC: %s", err.Error())
+		return
+	}
+	go http.Serve(listener, nil)
 	go StoreManager()  // coroutine managing the in memory store
 	go LocalSyncTick() // coroutine telling the store manager to sync with local
+	go HeartbeatTick()
 	http.HandleFunc("/", MiddleWere)
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(CFG.HTTPPort, nil)
 }
 
 // NewResponse creates a new response to be returned
@@ -120,8 +154,8 @@ func MiddleWere(w http.ResponseWriter, r *http.Request) {
 		PostContent(w, r)
 	} else if r.Method == "GET" {
 		GetContent(w, r)
-	} else if r.Method == "DELETE" {
-		DeleteContent(w, r)
+	} else {
+		log.Fatalf("Unknown Request received.")
 	}
 }
 
@@ -145,6 +179,7 @@ func GetContent(w http.ResponseWriter, r *http.Request) {
 		ActionGet,
 		Message{value, map[string]int{}},
 		responseChannel,
+		0,
 	}
 	StoreChannel <- act           // sending request for our data to the store manager
 	response := <-responseChannel // waiting for a reply
@@ -187,6 +222,7 @@ func PostContent(w http.ResponseWriter, r *http.Request) {
 		ActionSet,
 		msg,
 		nil,
+		0,
 	}
 	StoreChannel <- act
 	resp.Response = wordCount
@@ -230,19 +266,22 @@ func StoreManager() {
 					InternalStore[word] += count
 				}
 				modified = true
+				atomic.AddUint64(&Index, 1)
 				// syncing with other nodes
-
-				for _, nodePath := range Nodes {
-					conn, err := rpc.DialHTTP("tcp", nodePath)
+				action.Action = ActionUpdateFromNode
+				for _, nodePath := range CFG.Nodes {
+					conn, err := rpc.DialHTTP("tcp", nodePath.RPCAddress)
 					if err != nil {
 						LogEvent(fmt.Sprintf("Error connecting to node for sync: %s", err.Error()), LogError)
 						continue
 					}
-					err = conn.Call("Action.AppendEntry", action, nil)
+					var dummyInt uint64 = 0
+					err = conn.Call("Store.AppendEntry", &action, &dummyInt)
 					if err != nil {
 						LogEvent(fmt.Sprintf("Error sending data to node %s: %s", nodePath, err.Error()), LogError)
 						continue
 					}
+					defer conn.Close()
 				}
 				break
 			}
@@ -252,6 +291,7 @@ func StoreManager() {
 					InternalStore[word] += count
 				}
 				modified = true
+				atomic.AddUint64(&Index, 1)
 				break
 			}
 		case ActionSyncLocal:
@@ -267,6 +307,7 @@ func StoreManager() {
 				for word, count := range action.MSG.Counts {
 					InternalStore[word] = count
 				}
+				atomic.StoreUint64(&Index, action.Index)
 				modified = true
 				break
 			}
@@ -285,7 +326,14 @@ func StoreManager() {
 
 // UpdateFileContent will update the local db (file) containing our mockup DB
 func UpdateFileContent(store Store) {
-	jsonFile, err := json.Marshal(InternalStore)
+	data := struct {
+		Store Store  `json:"Store"`
+		Index uint64 `json:"Index"`
+	}{
+		InternalStore,
+		atomic.LoadUint64(&Index),
+	}
+	jsonFile, err := json.Marshal(data)
 	if err != nil {
 		fmt.Printf("Error // to handle%s", err.Error())
 		return
@@ -325,10 +373,19 @@ func ReadFileContent() {
 		log.Fatalf("Error reading file: %s", err.Error())
 
 	}
-	err = json.Unmarshal(fileContent, &InternalStore)
+	data := struct {
+		Store Store  `json:"Store"`
+		Index uint64 `json:"Index"`
+	}{
+		InternalStore,
+		Index,
+	}
+	err = json.Unmarshal(fileContent, &data)
 	if err != nil {
 		log.Fatalf("Error unmarsheling json: %s", err.Error())
 	}
+	InternalStore = data.Store
+	atomic.StoreUint64(&Index, data.Index)
 }
 
 // WriteJSON writes the object as json to the client
@@ -349,6 +406,7 @@ func LocalSyncTick() {
 			ActionSyncLocal,
 			Message{},
 			nil,
+			0,
 		}
 		StoreChannel <- act
 	}
@@ -395,24 +453,134 @@ func (rw *RespWriterWithCode) WriteHeader(code int) {
 }
 
 // AppendEntry is a RPC call to append new data to our store from other node
-func (s *Store) AppendEntry(arg Action) error {
-	StoreChannel <- arg
+func (s *Store) AppendEntry(arg *Action, unusedRetVal *uint64) error {
+	StoreChannel <- *arg
+	return nil
+}
+
+// GetLogIndex returns the Index number of the local Store at the request of another node for sync
+func (s Store) GetLogIndex(arg Action, retIndex *uint64) error {
+	*retIndex = atomic.LoadUint64(&Index)
+	return nil
+}
+
+// GetLogSyncAction gets from the node all data for the purpose of rebuilding the local db from the node we are asking
+func (s Store) GetLogSyncAction(arg Action, retAct *Action) error {
+	*retAct = Action{
+		ActionSyncLogFromNode,
+		Message{
+			"",
+			InternalStore,
+		},
+		nil,
+		atomic.LoadUint64(&Index),
+	}
+	return nil
+}
+
+// Heartbeat is called every few ticks to check if a node is still alive
+// If the function can't be executed or connection can't be established we decide the node is down
+func (s Store) Heartbeat(arg Action, reply *bool) error {
+	*reply = true
 	return nil
 }
 
 // SyncLog will update the local db by overwriting it with the one received from the node (this should only happen on startup when other nodes already have changes)
-func (s *Store) SyncLog(arg Action) error {
+func (s *Store) SyncLog(arg Action, unused *uint64) error {
 	StoreChannel <- arg
 	return nil
 }
 
-// PropagateNewEntry will send an update to all nodes available
-func PropagateNewEntry() {
+// HeartbeatTick is ran in a coroutine and every established interval tries to connect to all the nodes
+// If all nodes fail to connect it cosiders that itself is down and when connections will be established, it will ask for a full store update
+func HeartbeatTick() {
+	done := make(chan *rpc.Call, len(CFG.Nodes))
+	var shouldRequestUpdate bool = true
+	nodeStatus := make(map[int]bool)
+	for {
+		time.Sleep(time.Microsecond * 300)
+		var failedCounter int = 0
+		var executedConnections int = 0
+		for idx, cltData := range CFG.Nodes {
+			clt, err := rpc.DialHTTP("tcp", cltData.RPCAddress)
+			if err != nil {
+				nodeStatus[idx] = false
+				failedCounter++
+				continue
+			}
 
+			var repl bool
+			clt.Go("Store.Heartbeat", Action{}, &repl, done)
+			executedConnections++
+			nodeStatus[idx] = true
+		}
+		var replyCounter int = 0
+		for {
+			resp := <-done
+			replyCounter++
+			if resp.Error != nil {
+				LogEvent(fmt.Sprintf("Error getting heartbeat from node: %s", resp.Error.Error()), LogError)
+			}
+			if replyCounter == executedConnections {
+				break
+			}
+		}
+		if failedCounter == len(CFG.Nodes) {
+			shouldRequestUpdate = true // it means we are either down or the only node available
+			continue
+		} else {
+			// if previously we were down or the only node we compare with other node
+			// we check local index against the index of a node
+			// if our index is below the index of the node we ask for a full sync
+			if shouldRequestUpdate {
+				for idx, sts := range nodeStatus {
+					if sts == true {
+						clt, err := rpc.DialHTTP("tcp", CFG.Nodes[idx].RPCAddress)
+						if err != nil {
+							nodeStatus[idx] = false
+							continue
+						}
+						var repl uint64
+						err = clt.Call("Store.GetLogIndex", Action{}, &repl)
+						if err != nil {
+							nodeStatus[idx] = false
+							continue
+						}
+						if repl > atomic.LoadUint64(&Index) {
+							act := Action{}
+							err = clt.Call("Store.GetLogSyncAction", Action{}, &act)
+							if err != nil {
+								nodeStatus[idx] = false
+								continue
+							}
+							StoreChannel <- act
+							shouldRequestUpdate = false
+							break
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func init() {
 	Nodes = []string{}
+	cfgFile, err := os.OpenFile(CONFIGNAME, os.O_RDONLY, 0666)
+	if err != nil {
+		log.Fatal(err.Error())
+		return
+	}
+	cfgData, err := ioutil.ReadAll(cfgFile)
+	if err != nil {
+		log.Fatal(err.Error())
+		return
+	}
+	err = json.Unmarshal(cfgData, &CFG)
+	if err != nil {
+		log.Fatal(err.Error())
+		return
+	}
 	InternalStore = make(map[string]int)
 	ReadFileContent()
 	StoreChannel = make(chan Action, 1024)
