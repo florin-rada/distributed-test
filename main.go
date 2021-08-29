@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -36,6 +37,8 @@ var (
 	InfoLogger *log.Logger
 	// ErrorLogger writes all errors to the log
 	ErrorLogger *log.Logger
+
+	PATH_IS_DIRECTORY = errors.New("Path is directory")
 )
 
 const (
@@ -159,7 +162,7 @@ func MiddleWere(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetContent handles the POSt api call that returns the content of our mockup Db
+// GetContent handles the GET api call that returns the content of our mockup Db
 func GetContent(w http.ResponseWriter, r *http.Request) {
 	resp := NewResponse()
 	err := r.ParseForm()
@@ -168,6 +171,7 @@ func GetContent(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, resp)
 		return
 	}
+	fmt.Printf("Form: %v", r.Form)
 	value := r.FormValue("text")
 	if value == "" {
 		resp.Errors = append(resp.Errors, "No text supplied.")
@@ -355,23 +359,21 @@ func UpdateFileContent(store Store) {
 }
 
 // ReadFileContent will read the local db (file) and fill the "in memory" db (the variable holding the data)
-func ReadFileContent() {
-	info, err := os.Stat(FILENAME)
+func ReadFileContent(fileName string) error {
+	info, err := os.Stat(fileName)
 	if os.IsNotExist(err) {
-		return
+		return err
 	}
 	if info.IsDir() {
-		log.Fatal("Can't open file name as it is a director")
-		return
+		return PATH_IS_DIRECTORY
 	}
-	file, err := os.Open(FILENAME)
+	file, err := os.Open(fileName)
 	if err != nil {
-
+		return err
 	}
 	fileContent, err := ioutil.ReadAll(file)
 	if err != nil {
-		log.Fatalf("Error reading file: %s", err.Error())
-
+		return err
 	}
 	data := struct {
 		Store Store  `json:"Store"`
@@ -382,10 +384,11 @@ func ReadFileContent() {
 	}
 	err = json.Unmarshal(fileContent, &data)
 	if err != nil {
-		log.Fatalf("Error unmarsheling json: %s", err.Error())
+		return err
 	}
 	InternalStore = data.Store
 	atomic.StoreUint64(&Index, data.Index)
+	return nil
 }
 
 // WriteJSON writes the object as json to the client
@@ -582,7 +585,10 @@ func init() {
 		return
 	}
 	InternalStore = make(map[string]int)
-	ReadFileContent()
+	err = ReadFileContent(FILENAME)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 	StoreChannel = make(chan Action, 1024)
 
 	file, err := os.OpenFile("logs.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)

@@ -1,0 +1,36 @@
+swagger: '2.0'
+info:
+  title: Distributed Test
+  version: '1.0'
+host: localhost:9090
+basePath: /
+schemes:
+  - https
+paths:
+  /:
+    get:
+      summary: Returns the number of occurencies for the specified keywords
+      parameters:
+        - in: path
+          name: text
+          required: true
+          type: string
+          description: The text for which the occurencies will be calculated
+      produces:
+        - application/json
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Inserts in the database the keywords supplied and the number of occurencies of each keyword in the input
+      parameters:
+        - in: path
+          name: text
+          required: true
+          type: string
+          description: The keywords for which the occurencies will be returned
+      produces:
+        - application/json
+      responses:
+        '200':
+          description: OK

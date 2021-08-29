@@ -38,3 +38,12 @@ ERROR: 2020/09/28 16:12:37 main.go:430: Error connecting to node for sync: dial 
 ERROR: 2020/09/28 16:12:39 main.go:430: Error connecting to node for sync: dial tcp [::1]:1237: connectex: No connection could be made because the target machine actively refused it.
 ERROR: 2020/09/28 16:12:41 main.go:430: Error connecting to node for sync: dial tcp [::1]:1238: connectex: No connection could be made because the target machine actively refused it.
 ERROR: 2020/09/28 16:12:44 main.go:430: Error connecting to node for sync: dial tcp [::1]:1239: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2020/09/28 14:55:16 main.go:430: Error connecting to node for sync: dial tcp [::1]:1236: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2020/09/28 14:55:17 main.go:430: Error connecting to node for sync: dial tcp [::1]:1237: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2020/09/28 14:55:18 main.go:430: Error connecting to node for sync: dial tcp [::1]:1238: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2020/09/28 14:55:20 main.go:430: Error connecting to node for sync: dial tcp [::1]:1239: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2021/08/29 17:57:22 main.go:430: Error connecting to node for sync: dial tcp [::1]:1235: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2021/08/29 17:57:25 main.go:430: Error connecting to node for sync: dial tcp [::1]:1236: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2021/08/29 17:57:27 main.go:430: Error connecting to node for sync: dial tcp [::1]:1237: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2021/08/29 17:57:29 main.go:430: Error connecting to node for sync: dial tcp [::1]:1238: connectex: No connection could be made because the target machine actively refused it.
+ERROR: 2021/08/29 17:57:32 main.go:430: Error connecting to node for sync: dial tcp [::1]:1239: connectex: No connection could be made because the target machine actively refused it.
