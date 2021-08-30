@@ -1,4 +1,4 @@
-package main
+package mymain
 
 import (
 	"encoding/json"
@@ -89,8 +89,8 @@ type RespWriterWithCode struct {
 
 // Message instance will be sent via channel to the UpdateStore coroutine to be added to the store
 type Message struct {
-	Text   string
-	Counts map[string]int
+	Text   string         `json:"Text"`
+	Counts map[string]int `json:"Counts"`
 }
 
 // Action is sent to the StoreManager and depending on the supplied values specific actions will be set
@@ -171,7 +171,7 @@ func GetContent(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, resp)
 		return
 	}
-	fmt.Printf("Form: %v", r.Form)
+
 	value := r.FormValue("text")
 	if value == "" {
 		resp.Errors = append(resp.Errors, "No text supplied.")
@@ -231,11 +231,6 @@ func PostContent(w http.ResponseWriter, r *http.Request) {
 	StoreChannel <- act
 	resp.Response = wordCount
 	WriteJSON(w, resp)
-}
-
-// DeleteContent handles the DELETE call that removes a entry from our mockup DB
-func DeleteContent(w http.ResponseWriter, r *http.Request) {
-
 }
 
 // StoreManager will run in a coroutine and will update the Store or return values from store
@@ -381,6 +376,9 @@ func ReadFileContent(fileName string) error {
 	}{
 		InternalStore,
 		Index,
+	}
+	if len(fileContent) <= 0 {
+		return nil
 	}
 	err = json.Unmarshal(fileContent, &data)
 	if err != nil {
@@ -585,6 +583,12 @@ func init() {
 		return
 	}
 	InternalStore = make(map[string]int)
+
+	_, err = os.OpenFile(FILENAME, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		log.Fatal(err.Error())
+		return
+	}
 	err = ReadFileContent(FILENAME)
 	if err != nil {
 		log.Fatal(err.Error())
